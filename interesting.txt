@@ -1,0 +1,1008 @@
+/// <reference path="_references.js" />
+/// <reference path="BasicController.js" />
+
+var DEBUG_PLAG = true, menuList = {}, permitted_main_menu_list = [], permitted_sub_menu_list = [];
+
+var DATATYPE;
+(function (DATATYPE) {
+    DATATYPE[DATATYPE["status"] = 0] = "status";
+    DATATYPE[DATATYPE["text_error"] = 1] = "text_error";
+    DATATYPE[DATATYPE["text"] = 2] = "text";
+    DATATYPE[DATATYPE["text_list"] = 3] = "text_list";
+    DATATYPE[DATATYPE["table"] = 4] = "table";
+    DATATYPE[DATATYPE["ip_error"] = 10] = "ip_error";
+    DATATYPE[DATATYPE["ip"] = 11] = "ip";
+    DATATYPE[DATATYPE["mac_error"] = 20] = "mac_error";
+    DATATYPE[DATATYPE["mac"] = 21] = "mac";
+    DATATYPE[DATATYPE["mac_list"] = 22] = "mac_list";
+    DATATYPE[DATATYPE["radio_error"] = 30] = "radio_error";
+    DATATYPE[DATATYPE["radio"] = 31] = "radio";
+    DATATYPE[DATATYPE["radio_value"] = 32] = "radio_value";
+    DATATYPE[DATATYPE["checkbox_error"] = 40] = "checkbox_error";
+    DATATYPE[DATATYPE["checkbox"] = 41] = "checkbox";
+    DATATYPE[DATATYPE["dropdown_error"] = 50] = "dropdown_error";
+    DATATYPE[DATATYPE["dropdown"] = 51] = "dropdown";
+    DATATYPE[DATATYPE["dropdown_list"] = 52] = "dropdown_list";
+
+})(DATATYPE || (DATATYPE = {}));
+
+var PRIORITY;
+(function (PRIORITY) {
+    PRIORITY[PRIORITY["1st Priority"] = 0] = "1st Priority";
+    PRIORITY[PRIORITY["2nd Priority"] = 1] = "2nd Priority";
+    PRIORITY[PRIORITY["3rd Priority"] = 2] = "3rd Priority";
+    PRIORITY[PRIORITY["4rd Priority"] = 3] = "4th Priority";
+    PRIORITY[PRIORITY["5rd Priority"] = 4] = "5th Priority";
+    PRIORITY[PRIORITY["6rd Priority"] = 5] = "6th Priority";
+    PRIORITY[PRIORITY["7rd Priority"] = 6] = "7th Priority";
+})(PRIORITY || (PRIORITY = {}));
+
+var MESSAGES;
+(function (MESSAGES) {
+    MESSAGES[MESSAGES["The settings has been completed."] = 0] = "The settings has been completed.";
+    MESSAGES[MESSAGES["An error has occurred."] = 1] = "An error has occurred.";
+})(MESSAGES || (MESSAGES = {}));
+
+var isAjaxLoading = false;
+var main_menulist = $("#global-nav").children("li");
+var gCurrentView = null;
+var _bfirstMenu = false;
+var console = window.console || { log: function () { } };
+
+var _objCurrentViewData = null;
+var _event_main_menu = null;
+var _event_sub_menu = null;
+var _bGet_Main_menu = false;
+var _bCheck_userparent_in_mainmenu = false;
+var _isMainmenuChanging = false;
+
+var _bActiveInternationalization = true;
+
+var _stri18nLang = "en";
+var _strProductModelInfo = "";
+var _bSpecialID = 0;
+var _strProductVendorInfo = "";
+
+var error_help = '<div id="modal-help" class="modal">'
+        + '<h2><span data-i18n="nav.STR_HELP_ID">Help</span> <span class="breadcomb" data-i18n="nav.STR_HELP_HELP_ID">/ Help</span></h2>'
+        + '<div class="modal-help-content">'
+        + '<h3 data-i18n="nav.STR_NOT_SUPPORTED_01_ID">Not Supported</h3>'
+        + '</div>'
+        + '<div><a href="javascript:void(0)" class="close-btn" data-i18n="nav.STR_CLOSE_ID">Close</a></div></div>';
+
+
+function InternationalizationCodeInit(cb) {
+
+    if (_bActiveInternationalization == true) {
+        var method = {
+            "method": "Device.getDBInfo",
+            "id": 90,
+            "jsonrpc": "2.0",
+            "params": {
+                "WEB_Country_Code": ""
+            },
+            "token": Token.GetToken()
+        }
+
+        $.ajax({
+            url: "/api",
+            type: "POST",
+            data: JSON.stringify(method),
+            async: false,
+            timeout: 20000,
+            context: this,
+            beforeSend: function () {
+            },
+            success: function (data) {
+                console.log("country code result : " + data);
+
+                var webcountry = $.parseJSON(data);
+
+                if (webcountry.result != null)
+                    _stri18nLang = $.parseJSON(data)["result"].WEB_Country_Code;
+
+                if (_stri18nLang.length <= 0)
+                    _bActiveInternationalization = false;
+                else {
+                    i18n.init({ lng: _stri18nLang, fallbackLng: 'en' }, function (t) {
+                        $(".nav").i18n();
+                        ReInitRayOut();
+                        if (cb) {
+                            cb();
+                        }
+                    });
+                }
+            },
+            complete: function () {
+
+            },
+            error: function (jqxhr, textStatus, error) {
+                _bActiveInternationalization = false;
+            }
+        });
+    }
+}
+
+function InitMenuAndSettings() {
+    /// <summary>
+    /// Initializes the menu and settings.
+    /// </summary>
+
+    _objCurrentViewData = null;
+    _event_main_menu = null;
+    _event_sub_menu = null;
+    _isMainmenuChanging = false;
+    _bSpecialID = false;
+
+    ResetMenuEventBindings();
+
+    var login = Infra.Auth.loadSavedLogin();
+    var isMenuInitiated = false;
+    _bfirstMenu = false;
+
+    if (CheckModelCookie() == true) {
+        Infra.Auth.deleteLogin();
+        login = null;
+    } else {
+        login = Infra.Auth.loadSavedLogin();
+    }
+
+    if (isMenuInitiated == false) {
+        if (isAuthenticated()) {
+            var login = Infra.Auth.loadSavedLogin();
+
+            if (loadMenuTree(login[0], login[1]) == false) {
+                Infra.Auth.deleteLogin();
+                isAuthenticated();
+            }
+
+            InitFirstEntryMenu();
+        }
+    }
+}
+
+var InitFirstEntryMenu = function () {
+    InitMainmenu();
+    ReplaceSubmenuBy("basic");
+    $("#global-nav").off("click").on("click", "a", MainmenuClickHandler);
+
+    var FireFirstSubmenuItem = function () {
+        $("#sub-nav").children().first().children().trigger("click");
+    }
+
+    FireFirstSubmenuItem();
+};
+
+var loadingBar = {
+    show: function (LoadingTxt) {
+        var text = $("#LoadingTxt");
+        if (LoadingTxt) {
+            text.text(LoadingTxt);
+            console.log(LoadingTxt);
+        }
+        else {
+            var strLoading = i18n.t("nav.STR_LOADING_11_ID");
+            text.text(strLoading);
+            // text.text("Loading...");
+            console.log("Loading...");
+        }
+        $("#LoadingBar").show();
+        isAjaxLoading = true;
+    },
+    hide: function () {
+        $("#LoadingBar").hide();
+        isAjaxLoading = false;
+        console.log($("#LoadingTxt").text() + "closed!!!");
+    }
+};
+
+function close_browser() {
+    Cookie.unset("login");
+    Token.DeleteToken();
+
+}
+
+var check_user_password = function () {
+    var login = Infra.Auth.loadSavedLogin();
+    var strCookiePassword = "";
+
+    if (login)
+        strCookiePassword = login[1];
+
+    var strUserPasswd = $("#userpassword").val();
+
+    if (strCookiePassword == strUserPasswd) {
+        $("#userpassword").val("");
+        $(".modal-wrapper").hide();
+
+        if (_bGet_Main_menu == true)
+            BuildViewBySelectedMainmenu();
+        else
+            BuildViewBySelectedSubmenu();
+    }
+    else {
+        $("#userpassword").val("");
+        $(".modal-wrapper").hide();
+
+        var strMessage_Error_Incorrect = i18n.t("nav.STR_ERROR_INCORRECT_PASSWORD_ID");
+        dialog3_popup.show(strMessage_Error_Incorrect, "OK", function () {
+            dialog3_popup.hide();
+            $("#user-modal-wrapper").show();
+
+            $('#userpassword').off("keydown").on("keydown", (function (e) {
+                if (e.keyCode == 13) {
+                    check_user_password.call();
+                }
+            }));
+        });
+    }
+}
+
+var loadMenuTree = function (user, passwd) {
+
+    var bResult = false;
+
+    var _data = {
+        "method": "login",
+        "params": {
+            "id": user,
+            "password": passwd
+        },
+        "id": 1,
+        "jsonrpc": "2.0"
+    };
+    console.log("login : " + _data);
+
+    $.ajax({
+        url: "/api",
+        type: "POST",
+        data: JSON.stringify(_data),
+        async: false,
+        timeout: 20000,
+        context: this,
+        beforeSend: function () {
+        },
+        success: function (data) {
+            console.log("login result : " + data);
+            menuList = $.parseJSON(data)["result"];
+
+            // set menu list
+            if (permitted_main_menu_list) {
+                if (menuList == null) {
+                    bResult = false;
+                }
+                else {
+                    $.each(menuList, function (key) {
+                        permitted_main_menu_list.push(key);
+                        bResult = true;
+                    });
+                    if (bResult == true) {
+                        if ($.parseJSON(data)["token"] != undefined)
+                            Token.SetToken($.parseJSON(data)["token"]);
+
+                        if ($.parseJSON(data)["isSpecialID"] != undefined)
+                            _bSpecialID = Number($.parseJSON(data)["isSpecialID"]);
+
+                        if ($.parseJSON(data)["session_time_out"] != undefined)
+                            SessionTime.SetSesstionTime(Number($.parseJSON(data)["session_time_out"]));
+                        if($.parseJSON(data)["session_key"] != undefined) {
+                        	encryptor = new Encryptor($.parseJSON(data)["session_key"]);
+                        }
+                    }
+                }
+            }
+        },
+        complete: function () {
+        },
+        error: function (jqxhr, textStatus, error) {
+            var err = textStatus + ", " + error;
+            bResult = false;
+        }
+    });
+
+    return bResult;
+}
+
+/// <var>The reset menu event binding</var>
+var ResetMenuEventBindings = function () {
+
+    $("#quick-btn").unbind('click');
+    $("#quick-btn").click(function () {
+        var url = "http://" + window.location.host + "/quickSetup.html";
+        $(location).attr('href', url);
+    });
+
+    $("#scroll-top").unbind('click');
+    $("#scroll-top").click(function () {
+        $(window).scrollTop(0);
+    });
+
+    $("#help-btn").unbind('click');
+    $("#help-btn").click(function () {
+        $("#helpDialog").show();
+    });
+
+    $(".close-btn").unbind('click');
+    $(".close-btn").click(function () {
+        $(".modal-wrapper").hide();
+    });
+
+    $("#upgrade_popup").hide();
+    $("#reset_popup").hide();
+
+    $("#user-login-btn").unbind('click');
+    $("#user-login-btn").click(function () {
+        $("#user-modal-wrapper").hide();
+    });
+
+    $("#user-modal-wrapper").hide();
+
+    // 2015.04.27, kdh8307@humaxdigital.com, for akado logo
+    $(".logo2").hide();
+};
+
+function HidePopupAndProductViewApply() {
+    dialog2_popup.hide();
+    gCurrentView.apply();
+}
+
+function HidePopupAndGetSubmenu() {
+    dialog2_popup.hide();
+    BuildViewBySelectedSubmenu();
+}
+
+function HidePopupAndGetMainmenu() {
+    dialog2_popup.hide();
+    BuildViewBySelectedMainmenu();
+}
+
+function GetHelpFilename(strSubmenu) {
+    var ret = strSubmenu + "_help.html";
+
+    if (_strProductVendorInfo === "JCOM") {
+
+        if (strSubmenu === "upnp" || strSubmenu === "diagnostics" || strSubmenu === "logs")
+            ret = strSubmenu + "_jcom_help.html"
+    }
+
+    return ret;
+}
+
+function MainmenuClickHandler(event) {
+    _event_main_menu = event;
+
+    if (gCurrentView != null && _objCurrentViewData != null) {
+        _isMainmenuChanging = true;
+        var CurrentData = gCurrentView.getCurrentViewData();
+        //if (JSON.stringify(CurrentData) == JSON.stringify(_objCurrentViewData)) {
+        if (gCurrentView.isViewDataChanged(CurrentData)) {
+            console.log("gCurrentView.getCurrentViewData() != _objCurrentViewData");
+
+            var strMessage_Save_Change = i18n.t("nav.STR_SAVE_CHANGES_ID");
+            var strMessage_5171 = i18n.t("nav.STR_MESG_5171_ID");
+            var strYes = i18n.t("nav.STR_YES_ID");
+            var strNo = i18n.t("nav.STR_NO_ID");
+
+            dialog2_popup.show(strMessage_Save_Change,
+                strMessage_5171,
+                strYes, HidePopupAndProductViewApply, strNo, HidePopupAndGetMainmenu);
+            return;
+        }
+        else {
+            console.log("gCurrentView.getCurrentViewData() == _objCurrentViewData");
+        }
+    }
+
+
+    var login = Infra.Auth.loadSavedLogin();
+    var strCookiePassword = "";
+    if (login)
+        strCookiePassword = login[1];
+
+    var target = $(_event_main_menu.target);
+
+    if (target.attr("sub") == "usersetting" && (strCookiePassword != _strModelInfo)) {
+        _bGet_Main_menu = true;
+        _bCheck_userparent_in_mainmenu = true;
+        $("#user-modal-wrapper").show();
+        $("button#user-login-btn").off("click").on("click", check_user_password);
+        $('#userpassword').off("keydown").on("keydown", (function (e) {
+            if (e.keyCode == 13) {
+                check_user_password.call();
+            }
+        }));
+        return;
+    }
+    else
+        _bCheck_userparent_in_mainmenu = false;
+
+
+    BuildViewBySelectedMainmenu();
+
+};
+
+function SubmenuClickHandler(event) {
+
+    _event_sub_menu = event;
+
+    if (gCurrentView != null && _objCurrentViewData != null && _isMainmenuChanging == false) {
+
+        var CurrentData = gCurrentView.getCurrentViewData();
+        //if (JSON.stringify(CurrentData) == JSON.stringify(_objCurrentViewData)) {
+        if (gCurrentView.isViewDataChanged(CurrentData)) {
+            console.log("gCurrentView.getCurrentViewData() != _objCurrentViewData");
+
+            var strMessage_Save_Change = i18n.t("nav.STR_SAVE_CHANGES_ID");
+            var strMessage_5171 = i18n.t("nav.STR_MESG_5171_ID");
+            var strYes = i18n.t("nav.STR_YES_ID");
+            var strNo = i18n.t("nav.STR_NO_ID");
+
+            dialog2_popup.show(strMessage_Save_Change,
+            strMessage_5171,
+            strYes, HidePopupAndProductViewApply, strNo, HidePopupAndGetSubmenu);
+
+            return true;
+        }
+        else {
+            console.log("gCurrentView.getCurrentViewData() == _objCurrentViewData");
+        }
+    }
+
+    _isMainmenuChanging = false;
+    var target = $(_event_sub_menu.target);
+    var login = Infra.Auth.loadSavedLogin();
+    var strCookiePassword = "";
+    if (login)
+        strCookiePassword = login[1];
+
+    if (target.attr("sub") == "usersetting" && _bCheck_userparent_in_mainmenu == false && (strCookiePassword != _strModelInfo)) {
+        _bGet_Main_menu = false;
+        $("#user-modal-wrapper").show();
+        $("button#user-login-btn").off("click").on("click", check_user_password);
+
+        $('#userpassword').off("keydown").on("keydown", (function (e) {
+            if (e.keyCode == 13) {
+                check_user_password.call();
+            }
+        }));
+        return;
+    }
+    _bCheck_userparent_in_mainmenu = false;
+
+    BuildViewBySelectedSubmenu();
+
+};
+
+function BuildViewBySelectedMainmenu() {
+    if (_bActiveInternationalization == true) {
+        $("#global-nav").hide();
+        $("#sub-nav-wrapper").hide();
+    }
+
+    var target = $(_event_main_menu.target);
+
+
+    $.ajax({
+        url: "view/" + target.attr("main") + "/" + target.attr("sub") + ".html",
+        type: "GET",
+        async: false,
+        timeout: 20000,
+        beforeSend: function () {
+            if (_bfirstMenu == false) {
+                if (!isAuthenticated()) {
+                    return false;
+                }
+            }
+            var class_attr = target.parent().attr("class");
+            if (class_attr == "on" || isAjaxLoading == true) {
+                loadingBar.hide();
+                return false;
+            }
+
+            loadingBar.show();
+            ReplaceSubmenuBy(target.attr("main"));
+        },
+        success: function (data) {
+            if (data.length > 0) {
+                $("#contents-display").html(data);
+                RefreshMainmenu();
+                loadingBar.hide();
+            }
+            else {
+                return false;
+            }
+        },
+        complete: function () {
+            if ($("#sub-nav").children().first().children()) {
+                $("#sub-nav").children().first().children().trigger("click");
+            }
+        },
+        error: function (data) {
+            alert("MainmenuClickHandler : error");
+            if (data.status == "timeout") {
+                alert("MainmenuClickHandler : timeout");
+            }
+        }
+    });
+
+    if (_bActiveInternationalization == true) {
+        $("#global-nav").show();
+        $("#sub-nav-wrapper").show();
+    }
+
+    return true;
+}
+
+function BuildViewBySelectedSubmenu() {
+    if (_bActiveInternationalization == true) {
+        $("#contents-display").hide();
+        $("#sub-nav-wrapper").hide();
+    }
+
+    var bResult = false;
+    var target = $(_event_sub_menu.target);
+
+    if (target.attr("sub") == "logout") {
+        Cookie.unset("login");
+        Token.DeleteToken();
+    }
+
+    var strUrl = "view/" + target.attr("main") + "/" + GetHelpFilename(target.attr("sub"));
+
+    $.ajax({
+        url: strUrl,
+        type: "GET",
+        timeout: 20000,
+        async: false,
+        beforeSend: function () {
+            if (_bfirstMenu == false) {
+                if (!isAuthenticated()) {
+                    return false;
+                }
+            }
+            var class_attr = target.parent().attr("class");
+            if (class_attr == "on" || isAjaxLoading == true) {
+                loadingBar.hide();
+                return false;
+            }
+        },
+        success: function (data) {
+            if (data.length > 0)
+                $("#helpDialog").html(data);
+            else
+                $("#helpDialog").html(error_help);
+        },
+        complete: function () {
+            $("#help-btn").unbind('click');
+            $("#help-btn").click(function () {
+                $("#helpDialog").show();
+            });
+
+            $(".close-btn").unbind('click');
+            $(".close-btn").click(function () {
+                $(".modal-wrapper").hide();
+            });
+        },
+        error: function (data) {
+            $("#helpDialog").html(error_help);
+        }
+    });
+
+    $.ajax({
+        url: "view/" + target.attr("main") + "/" + target.attr("sub") + ".html",
+        type: "GET",
+        timeout: 20000,
+        async: false,
+        beforeSend: function () {
+            if (_bfirstMenu == false) {
+                if (!isAuthenticated()) {
+                    return false;
+                }
+            }
+            var class_attr = target.parent().attr("class");
+            if (class_attr == "on" || isAjaxLoading == true) {
+                loadingBar.hide();
+                return false;
+            }
+            loadingBar.show();
+        },
+        success: function (data) {
+
+            if (data.length > 0) {
+
+                $("#contents-display").html(data);
+                var sub_menulist = $("#sub-nav").children("li");
+                sub_menulist.removeClass("on");
+                $(_event_sub_menu.target).parents("li").addClass("on");
+
+                if (gCurrentView) {
+                    gCurrentView.offEvent();
+                    gCurrentView = null;
+                }
+                gCurrentView = ViewFactory.create(target.attr("main") + "_" + target.attr("sub"));
+                gCurrentView.fillData();
+                gCurrentView.onEvent();
+                _objCurrentViewData = gCurrentView.getCurrentViewData();
+
+                //NOTE : Why initialize model information here.
+                Init_model_info();
+
+                loadingBar.hide();
+                bResult = true;
+            }
+            else {
+                bResult = false;
+            }
+            loadingBar.hide();
+        },
+        complete: function () {
+        },
+        error: function (data) {
+            alert("SubmenuClickHandler : error");
+            if (data.status == "timeout") {
+                alert("SubmenuClickHandler : Timeout!");
+            }
+        }
+    });
+
+    if (_bActiveInternationalization == true)
+        $(".nav").i18n();
+
+    if (_bActiveInternationalization == true) {
+        $("#sub-nav-wrapper").show();
+        $("#contents-display").show();
+    }
+
+    return bResult;
+}
+
+function ReplaceSubmenuBy(main_menu) {
+    console.log("start ReplaceSubmenuBy");
+
+    $.ajax({
+        url: "view/" + main_menu + "/" + main_menu + "_menu" + ".html",
+        type: "GET",
+        timeout: 20000,
+        async: false,
+        beforeSend: function () {
+        },
+        success: function (data) {
+            console.log("success ReplaceSubmenuBy");
+            if (data.length > 0) {
+                $("#sub-nav-wrapper").html(data);
+                $("#sub-nav-wrapper").off("click").on("click", "a", SubmenuClickHandler);
+            }
+            else {
+                return false;
+            }
+            RefreshSubmenu();
+
+        },
+        complete: function () {
+        },
+        error: function (data) {
+            alert("ReplaceSubmenuBy : error");
+            if (data.status == "timeout") {
+                alert("ReplaceSubmenuBy : timeout");
+            }
+        }
+    });
+
+
+
+    console.log("end ReplaceSubmenuBy");
+
+    return false;
+};
+
+function InitMainmenu() {
+    var a = $("#global-nav").children("li").children("a");
+
+    for (var index = 0, max = a.length; index < max; index++) {
+        var main_name = $(a[index]).attr("main");
+        var Main_name_list = menuList[main_name];
+        if (typeof (Main_name_list) == "undefined") {
+            $(a[index]).hide();
+        }
+        else {
+            $(a[index]).show();
+        }
+    };
+}
+
+function RefreshMainmenu() {
+    InitMainmenu();
+    var main_menulist = $("#global-nav").children();
+    main_menulist.removeClass("on");
+    $(_event_main_menu.target).parents("li").addClass("on");
+}
+
+function RefreshSubmenu() {
+    var a = $("#sub-nav").children("li").children("a");
+    var main_name = "";
+    var sub_name = "";
+
+    for (var index = 0, max = a.length; index < max; index++) {
+        var sub_name = $(a[index]).attr("sub");
+        main_name = $(a[index]).attr("main");
+        var Main_name_list = menuList[main_name];
+        if ($.inArray(sub_name, Main_name_list) < 0) {
+            // ?�는 경우
+            $(a[index]).parent().remove();
+        }
+    };
+}
+
+function getAjaxData(method, id, jsonrpc) {
+    return '{ "method": "' + method + '", "id": ' + id + ', "jsonrpc": "' + jsonrpc + '", "params": {"need_key_type": true} }';
+}
+
+function update_dropdown_list(panel, data) {
+    var html = "";
+    html += "<ul>";
+    for (var i = 0, max = data.length; i < max; i++) {
+        html += '<li data-value="' + data[i] + '"><a>' + LocalizeTo(data[i]) + '</a></li>';
+    };
+    html += "</ul>";
+    return html;
+}
+
+function attach_dropdown_event(callback) {
+    $(".dropdown-menu .button").on("click", function (e) {
+        e.stopPropagation();
+
+        var self = $(this);
+        if (self.hasClass("disabled")) {
+            return true;
+        }
+
+        var target = $(e.target),  pane = $(this).parent().find('.scroll-pane');
+        if (pane.prop("style").display == "block") {
+            $(".scroll-pane").hide();
+        }
+        else {
+            $(".scroll-pane").hide();
+            pane.show();
+        }
+
+        // FIXME: What purpose below off code.
+        $(self.attr(".disabled")).off("click");
+
+        console.log(".dropdown-menu .button");
+    });
+    $(".scroll-pane li").on("click", function (e) {
+        e.stopPropagation();
+        var target = $(e.target);
+        target.siblings().removeClass("on");
+        target.addClass("on");
+        var valAndText = target.getLIValAndText();
+        target.parents(".scroll-pane").siblings(".button").setValAndText(valAndText);
+        $(".scroll-pane").hide();
+        if (callback) {
+            callback();
+        }
+        console.log(".scroll-pane li");
+    });
+    $(".scroll-pane li a").on("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        var target = $(e.target);
+        target.parents("li").trigger("click");
+        console.log(".scroll-pane li a");
+    });
+    $(".scroll-pane").on("click", function (e) {
+        e.stopPropagation();
+        console.log(".scroll-pane");
+    });
+    $("html").on("click", function () {
+        console.log("click body");
+        $(".scroll-pane").hide();
+    });
+}
+
+function detach_dropdown_event() {
+    $(".dropdown-menu .button").off("click");
+    $(".scroll-pane li").off("click");
+    $(".scroll-pane li a").off("click");
+    $(".scroll-pane").off("click");
+    $("html").off("click");
+}
+
+function check_radio_button(name, value, isChecked) {
+
+    if (isChecked !== undefined) {
+        if (isChecked) {
+            $('input[name="' + name + '"][value="' + value + '"]').attr("checked", function (i, val) {
+                return !val;
+            });
+        } else {
+            $('input[name="' + name + '"][value="' + value + '"]').removeProp("checked", function (i, val) {
+                return !val;
+            });
+        }
+    }
+    else {
+        $("input:radio[name=" + name + "]").prop("checked", false);
+        $("input:radio[name='" + name + "'][value='" + value + "']").prop("checked", true);
+    }
+}
+
+function addhtml(element, html) {
+    element.html(html);
+    if (_bActiveInternationalization == true)
+        $(".nav").i18n();
+}
+
+var dialog2_popup = {
+    show: function (title, content, firstBtnText, callback_firstBtn, secondBtnText, callback_secondBtn, bLeftGrey) {
+        $("#dialog2_title").html(title);
+        $("#dialog2_content").html(content);
+
+        if (firstBtnText && callback_firstBtn) {
+            $("#dialog2_firstBtn").html(firstBtnText);
+            $("#dialog2_firstBtn").off("click").on("click", callback_firstBtn);
+        }
+
+        if (secondBtnText && callback_secondBtn) {
+            $("#dialog2_secondBtn").html(secondBtnText);
+            $("#dialog2_secondBtn").off("click").on("click", callback_secondBtn);
+        }
+
+        if (bLeftGrey && bLeftGrey == true) {
+            $("#dialog2_firstBtn").addclass("grey");
+            $("#dialog2_secondBtn").removeClass("grey");
+        }
+
+        $("#dialog2").show();
+    },
+    hide: function () {
+        $("#dialog2").hide();
+    }
+};
+
+var dialog3_popup = {
+    show: function (content, confirmBtnText, callback_confirmBtn) {
+        $("#dialog3_content").html(content);
+        if (confirmBtnText && callback_confirmBtn) {
+            $("#dialog3_confirmBtn").html(confirmBtnText);
+            $("#dialog3_confirmBtn").off("click").on("click", callback_confirmBtn);
+        }
+        $("#dialog3").show();
+    },
+    hide: function () {
+        $("#dialog3").hide();
+    }
+};
+
+function CheckTarget() {
+    var bResult = false;
+
+    $.ajax({
+        url: "/api",
+        type: "POST",
+        async: false,
+        timeout: 1000,
+        beforeSend: function () {
+        },
+        success: function (data) {
+            bResult = true;
+        },
+        complete: function () {
+        },
+        error: function (data) {
+        }
+    });
+
+    return bResult;
+}
+
+function Set_model_info(model_info) {
+    _strProductModelInfo = model_info;
+
+    Init_model_info();
+}
+
+function Init_model_info() {
+    $("." + "HG100RE-02").hide();
+    $("." + "HG100RE-02GM").hide();
+    $("." + "HG100R-02JG").hide();
+    $("." + "HG100RE-AK").hide();
+    $("." + "HG100R-L2").hide();
+    $("." + "HG100R-L4").hide();
+
+    if (_strProductModelInfo == "HG100RE-02")
+        $("." + "HG100RE-02").show();
+
+    if (_strProductModelInfo == "HG100RE-02GM")
+        $("." + "HG100RE-02GM").show();
+
+    if (_strProductModelInfo == "HG100R-02JG")
+        $("." + "HG100R-02JG").show();
+
+    if (_strProductModelInfo == "HG100RE-AK")
+        $("." + "HG100RE-AK").show();
+
+    if (_strProductModelInfo == "HG100R-L2")
+        $("." + "HG100R-L2").show();
+
+    if (_strProductModelInfo == "HG100R-L4")
+        $("." + "HG100R-L4").show();
+}
+
+function Init_i18n() {
+    if (_bActiveInternationalization == true)
+        $(".nav").i18n();
+}
+
+function ShowReset() {
+    $("#reset_popup").show();
+    Cookie.unset("login");
+    Token.DeleteToken();
+
+    setTimeout(function () {
+        if (CheckTarget() == true)
+            window.location.reload(true);
+        else {
+            var bRefresh = false;
+            var bSuccessed = false;
+            var bTargetResult = true;
+
+            var timer = setInterval(doRefreshClientWpsStatus, 2000);
+
+            setTimeout(function () {
+                if (bSuccessed == false)
+                    window.location.reload(true);
+                clearInterval(timer);
+            }, 1000 * 60 * 2);
+
+            function doRefreshClientWpsStatus() {
+                if (bTargetResult == true) {
+                    bTargetResult = false;
+                    if (CheckTarget() == false)
+                        bRefresh = true;
+                    else
+                        bRefresh = false;
+
+                    if (bRefresh == false) {
+                        bSuccessed = true;
+                        window.location.reload(true);
+                        clearInterval(timer);
+                    }
+
+                    bTargetResult = true;
+                }
+            }
+        }
+    }, 1000 * 30); //reset 명령 ??10�??�에 ?�행
+}
+
+function isSettingChanged() {
+    var CurrentData = gCurrentView.getCurrentViewData();
+    if (gCurrentView.isViewDataChanged(CurrentData) === false) {
+        dialog3_popup.show(i18n.t("nav.RG_STR_NO_CHANGE_DATA_ID"), "OK", function () {
+            dialog3_popup.hide();
+        });
+        return false;
+    }
+
+    return true;
+}
+
+function ReInitRayOut() {
+    if (_stri18nLang === "ru") {
+        $("#global-nav li a").css("width", "166px");
+        $("#global-nav-wrapper").css("width", "240px");
+        $("#sub-nav-wrapper").css("left", "240px");
+        $("#section").css("margin-left", "490px");
+        $("#global-nav-wrapper .logo").css("left", "80px");
+        $(".logo2").css("left", "585px");
+    }
+    else {
+        $("#global-nav li a").css("width", "66px");
+        $("#global-nav-wrapper").css("width", "140px");
+        $("#sub-nav-wrapper").css("left", "140px");
+        $("#section").css("margin-left", "390px");
+        $("#global-nav-wrapper .logo").css("left", "30px");
+        $(".logo2").css("left", "485px");
+    }
+}

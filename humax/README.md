@@ -6,10 +6,10 @@
 	
 	USAGE:  python NETcrap.py [GATEWAY]
      	 	 Ex:
-     		 python NETcrap.py http://192.168.0.1
-     	 	 python NETcrap.py http://192.168.0.1/
-     	 	 python NETcrap.py 192.168.0.1     
-     	 	 python NETcrap.py 192.168.0.1/
+     		 python NET.py http://192.168.0.1
+     	 	 python NET.py http://192.168.0.1/
+     	 	 python NET.py 192.168.0.1     
+     	 	 python NET.py 192.168.0.1/
 
 <h3>Help-me :o</h3>
 
